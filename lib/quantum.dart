@@ -4,8 +4,9 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:delayed_progress_indicator/delayed_progress_indicator.dart';
 import 'package:fast_log/fast_log.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:jpatch/jpatch.dart';
 import 'package:throttled/throttled.dart';
 
@@ -23,11 +24,11 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
     if (after.containsKey(key)) {
       if (!eq(value, after[key])) {
         diff[key] = after[key];
-        verbose("[Patch]: Modified Field $key $value => ${after[key]}");
+        verbose("[Quantum]: Modified Field $key $value => ${after[key]}");
       }
     } else {
       diff[key] = FieldValue.delete();
-      verbose("[Patch]: Removed Field $key");
+      verbose("[Quantum]: Removed Field $key");
       List<String> k = key.split(".");
       k.removeLast();
       removalCheck.add(k.join("."));
@@ -36,10 +37,10 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
 
   for (final key in removalCheck) {
     if (after.keys.where((element) => element.startsWith("$key.")).isEmpty) {
-      verbose("[Patch]: Removed Field Group $key");
+      verbose("[Quantum]: Removed Field Group $key");
       diff.removeWhere((kkey, value) {
         if (value == FieldValue.delete() && kkey.startsWith("$key.")) {
-          verbose("[Patch]: -- Caused by Removing Field $kkey");
+          verbose("[Quantum]:  -- Caused by Removing Field $kkey");
           return true;
         }
 
@@ -52,7 +53,7 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
   after.forEach((key, value) {
     if (!before.containsKey(key)) {
       diff[key] = value;
-      verbose("[Patch]: Added Field $key $value");
+      verbose("[Quantum]: Added Field $key $value");
     }
   });
 
@@ -62,13 +63,99 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
     double len = diff.length.toDouble();
     double percent = ((len / keyCount) * 100);
     actioned(
-        "[Patch]: Pushed Document with ${(100.0 - percent).toStringAsFixed(0)}% efficiency (${diff.length} / ${keyCount.toInt()})");
+        "[Quantum]: Pushed Document with ${(100.0 - percent).toStringAsFixed(0)}% efficiency (${diff.length} / ${keyCount.toInt()})");
 
     return document.update(diff);
   }
 }
 
-class QuantumUnit<T> {
+abstract class QuantumHistory {
+  int getLastQuantumPush();
+
+  void setLastQuantumPush(int lastWrite);
+}
+
+typedef QuantumBuilderCallback<T> = Widget Function(
+    BuildContext context, QuantumController<T> controller, T data);
+
+typedef QuantumLoadingBuilder = Widget Function(BuildContext context);
+
+class QuantumStreamBuilder<T> extends StatelessWidget {
+  final QuantumController<T> controller;
+  final QuantumBuilderCallback<T> builder;
+  final QuantumLoadingBuilder? loadingBuilder;
+
+  const QuantumStreamBuilder({
+    Key? key,
+    required this.controller,
+    required this.builder,
+    this.loadingBuilder,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<T>(
+      stream: controller.stream(),
+      builder: (context, snap) => snap.hasData
+          ? builder(context, controller, snap.data as T)
+          : loadingBuilder?.call(context) ??
+              const Center(
+                child: DelayedProgressIndicator(),
+              ));
+}
+
+class QuantumBuilder<T> extends StatefulWidget {
+  final DocumentReference<Map<String, dynamic>> document;
+  final Deserializer<T> deserializer;
+  final Serializer<T> serializer;
+  final Duration phasingDuration;
+  final Duration feedbackDuration;
+  final QuantumBuilderCallback<T> builder;
+  final QuantumLoadingBuilder? loadingBuilder;
+
+  const QuantumBuilder(
+      {Key? key,
+      required this.document,
+      required this.deserializer,
+      required this.serializer,
+      required this.builder,
+      this.loadingBuilder,
+      this.phasingDuration = const Duration(milliseconds: 1000),
+      this.feedbackDuration = const Duration(milliseconds: 100)})
+      : super(key: key);
+
+  @override
+  State<QuantumBuilder> createState() => _QuantumBuilderState<T>();
+}
+
+class _QuantumBuilderState<T> extends State<QuantumBuilder> {
+  late QuantumController<T> _controller;
+
+  @override
+  void initState() {
+    _controller = QuantumController<T>(
+        document: widget.document,
+        deserializer: widget.deserializer as Deserializer<T>,
+        serializer: widget.serializer,
+        phasingDuration: widget.phasingDuration,
+        feedbackDuration: widget.feedbackDuration);
+    _controller.open();
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    _controller.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => QuantumStreamBuilder<T>(
+      controller: _controller,
+      builder: widget.builder,
+      loadingBuilder: widget.loadingBuilder);
+}
+
+class QuantumController<T> {
   final DocumentReference<Map<String, dynamic>> document;
   final Deserializer<T> deserializer;
   final Serializer<T> serializer;
@@ -76,11 +163,14 @@ class QuantumUnit<T> {
   final Duration feedbackDuration;
   T? _latest;
   Map<String, dynamic>? _lastLive;
+  Map<String, dynamic>? _lastLiveBeforePush;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _subscription;
   StreamController<T>? _controller;
   bool _mirroring = false;
+  int _lastCompletedPushHistory = -1;
+  int _lastPushHistory = -1;
 
-  QuantumUnit(
+  QuantumController(
       {required this.document,
       required this.deserializer,
       required this.serializer,
@@ -90,16 +180,21 @@ class QuantumUnit<T> {
   Future<void> pushWith(ValueChanged<T> callback, {bool force = false}) {
     if (!hasLatest()) {
       warn(
-          "Skipping push due to quantum session unit not ready yet. Next push will have these changes.");
+          "[Quantum]: Skipping push due to quantum session unit not ready yet. Next push will have these changes.");
       return Future.value();
     }
 
-    callback(_latest!);
-    return push(_latest!, force: force);
+    callback(_latest as T);
+    return push(_latest as T, force: force);
   }
 
   Future<void> push(T t, {bool force = false}) {
     Completer<void> completer = Completer();
+
+    if (t is QuantumHistory) {
+      _lastPushHistory = DateTime.now().millisecondsSinceEpoch;
+      t.setLastQuantumPush(_lastPushHistory);
+    }
 
     if (force) {
       _pushFull(t);
@@ -120,7 +215,12 @@ class QuantumUnit<T> {
 
   bool hasLatest() => _latest != null;
 
-  T getLatest() => _latest!;
+  Future<void> waitForFirst() => getLatest().then((value) => Future.value());
+
+  T? getLatestSync() => _latest;
+
+  Future<T> getLatest() =>
+      _latest != null ? Future.value(_latest!) : stream().first;
 
   void _pushFeedback(T t) {
     _pushPartial(t);
@@ -137,9 +237,15 @@ class QuantumUnit<T> {
 
   Future<void> _pushFull(T t) {
     if (_lastLive != null) {
-      return patchDocument(document, _lastLive!, serializer(t));
+      _lastLiveBeforePush =
+          _lastLive!.map((key, value) => MapEntry(key, value));
+      return patchDocument(document, _lastLive!, serializer(t)).then((value) {
+        if (t is QuantumHistory) {
+          _lastCompletedPushHistory = t.getLastQuantumPush();
+        }
+      });
     } else {
-      warn("No last live data yet for ${document.path}");
+      warn("[Quantum]: No last live data yet for ${document.path}");
     }
 
     return Future.value();
@@ -160,11 +266,34 @@ class QuantumUnit<T> {
   void open() {
     _latest = deserializer({});
     _mirroring = true;
-    _controller = StreamController.broadcast();
+    _controller = StreamController.broadcast(
+        onListen: () =>
+            getLatest().then((value) => _controller?.sink.add(value)));
     _subscription = document.snapshots().listen((event) {
       if (_mirroring && event.exists) {
         _lastLive = event.data();
         T t = deserializer(event.data());
+        if (t is QuantumHistory &&
+            t.getLastQuantumPush() != _lastPushHistory &&
+            t.getLastQuantumPush() != _lastCompletedPushHistory) {
+          int ourChange = _lastPushHistory;
+          int ourSyncedChange = _lastCompletedPushHistory;
+          if (ourChange > ourSyncedChange) {
+            warn(
+                "[Quantum]: Received a change while pushing... Resolving conflicts with a double diff");
+            Map<String, dynamic> theirs = _lastLive!;
+            Map<String, dynamic> beforeTheirs = _lastLiveBeforePush ?? {};
+            Map<String, dynamic> ourFuture = serializer(_latest!);
+            Map<String, JsonPatch> theirDiff = beforeTheirs.diff(theirs);
+            Map<String, dynamic> newData = ourFuture.patched(theirDiff);
+            removeThrottle("qu:phasing:${document.path}")?.cid = -1;
+            _pushFull(deserializer(newData)).then((value) => success(
+                "[Quantum]: Double Diffed out of an incoming change while writing successfully"));
+            _latest = t;
+            return;
+          }
+        }
+
         _controller?.sink.add(t);
         _latest = t;
       }

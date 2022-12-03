@@ -12,6 +12,7 @@ dependencies:
   jpatch: '>=1.0.1 <2.0.0'
   throttled: '>=1.0.0 <2.0.0'
   fast_log: '>=1.0.0 <2.0.0'
+  delayed_progress_indicator: ^1.0.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
