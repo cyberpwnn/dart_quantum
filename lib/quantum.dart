@@ -14,7 +14,8 @@ typedef Deserializer<T> = T Function(Map<String, dynamic>? value);
 typedef Serializer<T> = Map<String, dynamic> Function(T? value);
 
 Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
-    Map<String, dynamic> original, Map<String, dynamic> altered) async {
+    Map<String, dynamic> original, Map<String, dynamic> altered,
+    {bool logPatchDetails = true, bool logPushes = true}) async {
   Map<String, dynamic> before = flatMap(original);
   Map<String, dynamic> after = flatMap(altered);
   Map<String, dynamic> diff = <String, dynamic>{};
@@ -24,11 +25,15 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
     if (after.containsKey(key)) {
       if (!eq(value, after[key])) {
         diff[key] = after[key];
-        verbose("[Quantum]: Modified Field $key $value => ${after[key]}");
+        if (logPatchDetails) {
+          verbose("[Quantum]: Modified Field $key $value => ${after[key]}");
+        }
       }
     } else {
       diff[key] = FieldValue.delete();
-      verbose("[Quantum]: Removed Field $key");
+      if (logPatchDetails) {
+        verbose("[Quantum]: Removed Field $key");
+      }
       List<String> k = key.split(".");
       k.removeLast();
       removalCheck.add(k.join("."));
@@ -37,10 +42,14 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
 
   for (final key in removalCheck) {
     if (after.keys.where((element) => element.startsWith("$key.")).isEmpty) {
-      verbose("[Quantum]: Removed Field Group $key");
+      if (logPatchDetails) {
+        verbose("[Quantum]: Removed Field Group $key");
+      }
       diff.removeWhere((kkey, value) {
         if (value == FieldValue.delete() && kkey.startsWith("$key.")) {
-          verbose("[Quantum]:  -- Caused by Removing Field $kkey");
+          if (logPatchDetails) {
+            verbose("[Quantum]:  -- Caused by Removing Field $kkey");
+          }
           return true;
         }
 
@@ -53,7 +62,9 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
   after.forEach((key, value) {
     if (!before.containsKey(key)) {
       diff[key] = value;
-      verbose("[Quantum]: Added Field $key $value");
+      if (logPatchDetails) {
+        verbose("[Quantum]: Added Field $key $value");
+      }
     }
   });
 
@@ -62,8 +73,10 @@ Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
 
     double len = diff.length.toDouble();
     double percent = ((len / keyCount) * 100);
-    actioned(
-        "[Quantum]: Pushed Document with ${(100.0 - percent).toStringAsFixed(0)}% efficiency (${diff.length} / ${keyCount.toInt()})");
+    if (logPushes) {
+      actioned(
+          "[Quantum]: Pushed Document with ${(100.0 - percent).toStringAsFixed(0)}% efficiency (${diff.length} / ${keyCount.toInt()})");
+    }
 
     return document.update(diff);
   }
@@ -169,6 +182,9 @@ class QuantumController<T> {
   bool _mirroring = false;
   int _lastCompletedPushHistory = -1;
   int _lastPushHistory = -1;
+  bool logPatchDetails = true;
+  bool logPushes = true;
+  bool logWarnings = true;
 
   QuantumController(
       {required this.document,
@@ -179,8 +195,10 @@ class QuantumController<T> {
 
   Future<void> pushWith(ValueChanged<T> callback, {bool force = false}) {
     if (!hasLatest()) {
-      warn(
-          "[Quantum]: Skipping push due to quantum session unit not ready yet. Next push will have these changes.");
+      if (logWarnings) {
+        warn(
+            "[Quantum]: Skipping push due to quantum session unit not ready yet. Next push will have these changes.");
+      }
       return Future.value();
     }
 
@@ -239,12 +257,14 @@ class QuantumController<T> {
     if (_lastLive != null) {
       _lastLiveBeforePush =
           _lastLive!.map((key, value) => MapEntry(key, value));
-      return patchDocument(document, _lastLive!, serializer(t)).then((value) {
+      return patchDocument(document, _lastLive!, serializer(t),
+              logPatchDetails: logPatchDetails, logPushes: logPushes)
+          .then((value) {
         if (t is QuantumHistory) {
           _lastCompletedPushHistory = t.getLastQuantumPush();
         }
       });
-    } else {
+    } else if (logWarnings) {
       warn("[Quantum]: No last live data yet for ${document.path}");
     }
 
@@ -279,16 +299,22 @@ class QuantumController<T> {
           int ourChange = _lastPushHistory;
           int ourSyncedChange = _lastCompletedPushHistory;
           if (ourChange > ourSyncedChange) {
-            warn(
-                "[Quantum]: Received a change while pushing... Resolving conflicts with a double diff");
+            if (logWarnings) {
+              warn(
+                  "[Quantum]: Received a change while pushing... Resolving conflicts with a double diff");
+            }
             Map<String, dynamic> theirs = _lastLive!;
             Map<String, dynamic> beforeTheirs = _lastLiveBeforePush ?? {};
             Map<String, dynamic> ourFuture = serializer(_latest!);
             Map<String, JsonPatch> theirDiff = beforeTheirs.diff(theirs);
             Map<String, dynamic> newData = ourFuture.patched(theirDiff);
             removeThrottle("qu:phasing:${document.path}")?.cid = -1;
-            _pushFull(deserializer(newData)).then((value) => success(
-                "[Quantum]: Double Diffed out of an incoming change while writing successfully"));
+            _pushFull(deserializer(newData)).then((value) {
+              if (logPatchDetails) {
+                success(
+                    "[Quantum]: Double Diffed out of an incoming change while writing successfully");
+              }
+            });
             _latest = t;
             return;
           }

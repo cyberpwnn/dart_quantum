@@ -1,3 +1,7 @@
+## 1.1.1
+
+* Allow toggling log types
+
 ## 1.1.0
 
 This update has breaking changes. Simply rename your quantum units to QuantumController<T> instead of QuantumUnit<T>.
