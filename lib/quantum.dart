@@ -176,6 +176,7 @@ class QuantumController<T> {
   final DocumentReference<Map<String, dynamic>> document;
   final Deserializer<T> deserializer;
   final Serializer<T> serializer;
+  final bool compressionWarnings;
   final Duration phasingDuration;
   final Duration feedbackDuration;
   final int compressionChunkSize;
@@ -196,6 +197,7 @@ class QuantumController<T> {
       required this.deserializer,
       required this.serializer,
       this.compressionChunkSize = 8192,
+      this.compressionWarnings = false,
       this.compressionMode = QuantumCompressionMode.none,
       this.phasingDuration = const Duration(milliseconds: 1000),
       this.feedbackDuration = const Duration(milliseconds: 100)});
@@ -261,7 +263,7 @@ class QuantumController<T> {
   Stream<T> stream() => _controller!.stream;
 
   Map<String, dynamic> _decompress(Map<String, dynamic> json) =>
-      decompressJson(json);
+      decompressJson(json, ignoreWarnings: compressionWarnings);
 
   Map<String, dynamic> _compress(Map<String, dynamic> json) {
     return compressionMode == QuantumCompressionMode.none
