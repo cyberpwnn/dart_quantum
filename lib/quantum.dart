@@ -8,10 +8,13 @@ import 'package:delayed_progress_indicator/delayed_progress_indicator.dart';
 import 'package:fast_log/fast_log.dart';
 import 'package:flutter/material.dart';
 import 'package:jpatch/jpatch.dart';
+import 'package:json_compress/json_compress.dart';
 import 'package:throttled/throttled.dart';
 
 typedef Deserializer<T> = T Function(Map<String, dynamic>? value);
 typedef Serializer<T> = Map<String, dynamic> Function(T? value);
+
+enum QuantumCompressionMode { none, threshold, thresholdAndForceEncoded }
 
 Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
     Map<String, dynamic> original, Map<String, dynamic> altered,
@@ -169,11 +172,13 @@ class _QuantumBuilderState<T> extends State<QuantumBuilder> {
 }
 
 class QuantumController<T> {
+  final QuantumCompressionMode compressionMode;
   final DocumentReference<Map<String, dynamic>> document;
   final Deserializer<T> deserializer;
   final Serializer<T> serializer;
   final Duration phasingDuration;
   final Duration feedbackDuration;
+  final int compressionChunkSize;
   T? _latest;
   Map<String, dynamic>? _lastLive;
   Map<String, dynamic>? _lastLiveBeforePush;
@@ -190,6 +195,8 @@ class QuantumController<T> {
       {required this.document,
       required this.deserializer,
       required this.serializer,
+      this.compressionChunkSize = 8192,
+      this.compressionMode = QuantumCompressionMode.none,
       this.phasingDuration = const Duration(milliseconds: 1000),
       this.feedbackDuration = const Duration(milliseconds: 100)});
 
@@ -253,11 +260,23 @@ class QuantumController<T> {
 
   Stream<T> stream() => _controller!.stream;
 
+  Map<String, dynamic> _decompress(Map<String, dynamic> json) =>
+      decompressJson(json);
+
+  Map<String, dynamic> _compress(Map<String, dynamic> json) {
+    return compressionMode == QuantumCompressionMode.none
+        ? json
+        : compressJson(json,
+            forceEncode: compressionMode ==
+                QuantumCompressionMode.thresholdAndForceEncoded,
+            split: compressionChunkSize);
+  }
+
   Future<void> _pushFull(T t) {
     if (_lastLive != null) {
       _lastLiveBeforePush =
           _lastLive!.map((key, value) => MapEntry(key, value));
-      return patchDocument(document, _lastLive!, serializer(t),
+      return patchDocument(document, _lastLive!, _compress(serializer(t)),
               logPatchDetails: logPatchDetails, logPushes: logPushes)
           .then((value) {
         if (t is QuantumHistory) {
@@ -292,7 +311,7 @@ class QuantumController<T> {
     _subscription = document.snapshots().listen((event) {
       if (_mirroring && event.exists) {
         _lastLive = event.data();
-        T t = deserializer(event.data());
+        T t = deserializer(_decompress(event.data() ?? {}));
         if (t is QuantumHistory &&
             t.getLastQuantumPush() != _lastPushHistory &&
             t.getLastQuantumPush() != _lastCompletedPushHistory) {
@@ -305,11 +324,11 @@ class QuantumController<T> {
             }
             Map<String, dynamic> theirs = _lastLive!;
             Map<String, dynamic> beforeTheirs = _lastLiveBeforePush ?? {};
-            Map<String, dynamic> ourFuture = serializer(_latest!);
+            Map<String, dynamic> ourFuture = _compress(serializer(_latest));
             Map<String, JsonPatch> theirDiff = beforeTheirs.diff(theirs);
             Map<String, dynamic> newData = ourFuture.patched(theirDiff);
             removeThrottle("qu:phasing:${document.path}")?.cid = -1;
-            _pushFull(deserializer(newData)).then((value) {
+            _pushFull(deserializer(_decompress(newData ?? {}))).then((value) {
               if (logPatchDetails) {
                 success(
                     "[Quantum]: Double Diffed out of an incoming change while writing successfully");

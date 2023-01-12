@@ -1,3 +1,9 @@
+## 1.1.2
+
+* Allows full json compression support using json_compress with thresholding
+* Change the compression chunk size 8192 by default
+* Change the compression mode between none (default), threshold, or thresholdForceEncode
+
 ## 1.1.1
 
 * Allow toggling log types
