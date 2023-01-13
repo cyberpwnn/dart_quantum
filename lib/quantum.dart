@@ -180,6 +180,7 @@ class QuantumController<T> {
   final Duration phasingDuration;
   final Duration feedbackDuration;
   final int compressionChunkSize;
+  final JsonCompressionRetainerPredicate? compressionRetainer;
   T? _latest;
   Map<String, dynamic>? _lastLive;
   Map<String, dynamic>? _lastLiveBeforePush;
@@ -196,6 +197,7 @@ class QuantumController<T> {
       {required this.document,
       required this.deserializer,
       required this.serializer,
+      this.compressionRetainer,
       this.compressionChunkSize = 8192,
       this.compressionWarnings = false,
       this.compressionMode = QuantumCompressionMode.none,
@@ -263,12 +265,15 @@ class QuantumController<T> {
   Stream<T> stream() => _controller!.stream;
 
   Map<String, dynamic> _decompress(Map<String, dynamic> json) =>
-      decompressJson(json, ignoreWarnings: compressionWarnings);
+      decompressJson(json,
+          ignoreWarnings: compressionWarnings,
+          keepUnknownKeys: compressionRetainer != null);
 
   Map<String, dynamic> _compress(Map<String, dynamic> json) {
     return compressionMode == QuantumCompressionMode.none
         ? json
         : compressJson(json,
+            retainer: compressionRetainer,
             forceEncode: compressionMode ==
                 QuantumCompressionMode.thresholdAndForceEncoded,
             split: compressionChunkSize);

@@ -1,3 +1,7 @@
+## 1.1.4
+
+* Support partial json compression with retainers
+
 ## 1.1.3
 
 * Bugfixes with json compression
