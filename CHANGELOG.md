@@ -1,3 +1,31 @@
+## 1.1.11
+
+* Fix another patching issue
+
+## 1.1.10
+
+* Fix another patching issue
+
+## 1.1.9
+
+* Fix another patching issue
+
+## 1.1.8
+
+* Fix another patching issue
+
+## 1.1.7
+
+* Fix another patching issue
+
+## 1.1.6
+
+* Fix another patching issue
+
+## 1.1.5
+
+* Fix a patching issue
+
 ## 1.1.4
 
 * Support partial json compression with retainers

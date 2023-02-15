@@ -258,8 +258,8 @@ class QuantumController<T> {
   }
 
   void _pushPartial(T t) {
-    _controller?.sink.add(t);
     _latest = t;
+    _controller?.sink.add(t);
   }
 
   Stream<T> stream() => _controller!.stream;
@@ -318,6 +318,7 @@ class QuantumController<T> {
     _subscription = document.snapshots().listen((event) {
       if (_mirroring && event.exists) {
         _lastLive = event.data();
+        print("got $_lastLive");
         T t = deserializer(_decompress(event.data() ?? {}));
         if (t is QuantumHistory &&
             t.getLastQuantumPush() != _lastPushHistory &&
@@ -335,7 +336,7 @@ class QuantumController<T> {
             Map<String, JsonPatch> theirDiff = beforeTheirs.diff(theirs);
             Map<String, dynamic> newData = ourFuture.patched(theirDiff);
             removeThrottle("qu:phasing:${document.path}")?.cid = -1;
-            _pushFull(deserializer(_decompress(newData ?? {}))).then((value) {
+            _pushFull(deserializer(_decompress(newData))).then((value) {
               if (logPatchDetails) {
                 success(
                     "[Quantum]: Double Diffed out of an incoming change while writing successfully");
@@ -346,8 +347,7 @@ class QuantumController<T> {
           }
         }
 
-        _controller?.sink.add(t);
-        _latest = t;
+        _pushPartial(t);
       }
     });
   }
