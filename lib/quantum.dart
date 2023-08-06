@@ -18,7 +18,7 @@ enum QuantumCompressionMode { none, threshold, thresholdAndForceEncoded }
 
 Future<void> patchDocument(DocumentReference<Map<String, dynamic>> document,
     Map<String, dynamic> original, Map<String, dynamic> altered,
-    {bool logPatchDetails = true, bool logPushes = true}) async {
+    {bool logPatchDetails = false, bool logPushes = true}) async {
   Map<String, dynamic> before = flatMap(original);
   Map<String, dynamic> after = flatMap(altered);
   Map<String, dynamic> diff = <String, dynamic>{};

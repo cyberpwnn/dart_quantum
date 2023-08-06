@@ -1,3 +1,11 @@
+## 1.1.13
+
+* SDK
+
+## 1.1.12
+
+* Logging off by default
+
 ## 1.1.11
 
 * Fix another patching issue
