@@ -1,3 +1,6 @@
+## 1.1.14
+* Firestore constraint
+
 ## 1.1.13
 
 * SDK

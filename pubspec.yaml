@@ -1,6 +1,6 @@
 name: quantum
 description: Synchronize a firestore document efficiently with json patching while decoupling the state updates from doc updates.
-version: 1.1.13
+version: 1.1.14
 homepage: https://github.com/ArcaneArts/quantum
 environment:
   sdk: '>=2.18.4 <4.0.0'
@@ -8,7 +8,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cloud_firestore: '>=4.0.0 <5.0.0'
+  cloud_firestore: '>=4.0.0 <6.0.0'
   jpatch: '>=1.0.1 <2.0.0'
   json_compress: '>=1.0.2 <2.0.0'
   throttled: '>=1.0.0 <2.0.0'
